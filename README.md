@@ -220,6 +220,99 @@ cargo run -- <command>
 cargo build --release
 ```
 
+## 🎨 自定义图标和标题
+
+Lemo 支持自定义 Windows 应用程序图标（任务栏、快捷方式）和窗口标题栏。
+
+### 快速开始
+
+1. **准备图标文件**：获取或创建一个 `.ico` 格式的图标文件
+2. **命名并放置**：将图标文件命名为 `lemo.ico`，放在项目根目录
+3. **重新编译**：运行 `cargo build --release`
+4. **查看效果**：生成的 `lemo.exe` 将包含自定义图标和版本信息
+
+### 详细指南
+
+详细的自定义说明请参考：
+- 📖 [图标自定义完整指南](CUSTOM_ICON_GUIDE.md) - 详细步骤和最佳实践
+- 📝 [图标文件说明](ICON_README.md) - 图标获取和规格要求
+- ⚡ 快速下载示例图标：运行 `.\download-icon.ps1`
+
+### 自定义内容
+
+- ✅ 任务栏图标
+- ✅ 桌面快捷方式图标
+- ✅ 资源管理器中的 EXE 图标
+- ✅ 窗口标题栏（控制台标题）
+- ✅ 文件属性中的版本信息（右键 → 属性 → 详细信息）
+- ✅ 任务管理器中显示的描述
+
+### 修改版本信息
+
+编辑 `resources.rc` 文件可以修改：
+- 产品名称
+- 公司名称
+- 版本号
+- 版权信息
+- 文件描述
+
+详见 [CUSTOM_ICON_GUIDE.md](CUSTOM_ICON_GUIDE.md) 完整说明。
+
+### 维护发布者信息
+
+应用的发布者信息（公司名称、版权、版本等）在 `resources.rc` 文件中维护：
+
+```rc
+VALUE "CompanyName",      "ronger.io"              // 发布者/公司名称
+VALUE "FileDescription",  "Lemo - Windows System Toolkit"  // 任务管理器显示
+VALUE "LegalCopyright",   "Copyright (C) 2025"     // 版权信息
+VALUE "ProductName",      "Lemo"                   // 产品名称
+VALUE "FileVersion",      "0.2.3.0"                // 文件版本
+```
+
+**验证发布者信息：**
+
+编译后手动查看：
+```powershell
+(Get-Item .\target\release\lemo.exe).VersionInfo | Format-List
+```
+
+**详细指南：** 参考 [PUBLISHER_INFO_GUIDE.md](PUBLISHER_INFO_GUIDE.md) 获取完整的发布者信息维护说明。
+
+### 🔐 代码签名（解决 UAC "未知发布者"）
+
+当以管理员权限运行 Lemo 时，Windows UAC 弹窗会显示"未知发布者"。通过代码签名可以解决此问题。
+
+**快速开始（自签名证书）：**
+
+```powershell
+# 1. 创建自签名证书（以管理员身份运行，只需运行一次）
+.\create-certificate.ps1
+
+# 2. 安装证书到系统（以管理员身份运行，只需运行一次）
+.\install-certificate.ps1
+
+# 3. 编译项目
+cargo build --release
+
+# 4. 签名应用
+.\sign-release.ps1
+```
+
+签名后，UAC 弹窗将显示：
+- ✅ **已验证的发布者: ronger.io**（而不是"未知"）
+- ✅ 蓝色或黄色盾牌（取决于证书类型）
+
+**签名方案对比：**
+
+| 方案 | 成本 | UAC 显示 | 适用场景 |
+|------|------|----------|----------|
+| **自签名证书** | 免费 | 显示你的名字 | 个人使用、内部测试 |
+| **商业证书** | $200-400/年 | 显示公司名 | 公开分发 |
+| **EV 证书** | $400-600/年 | 绿色盾牌，完全信任 | 企业软件 |
+
+**详细指南：** 参考 [CODE_SIGNING_GUIDE.md](CODE_SIGNING_GUIDE.md) 获取完整的代码签名说明，包括商业证书购买和配置。
+
 ## 系统要求
 
 - Windows 10/11

@@ -48,6 +48,9 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    // 设置控制台窗口标题
+    set_console_title("Lemo - Windows System Toolkit");
+    
     let cli = Cli::parse();
 
     if let Some(command) = cli.command {
@@ -99,7 +102,7 @@ where
         "🧹 Clean Temp Files", 
         "📊 Real-time Monitor", 
         "📦 Install to System",
-        "🗑️  Uninstall from System",
+        "🗑️ Uninstall from System",
         "➡️ Exit"
     ];
 
@@ -953,7 +956,7 @@ fn render_gpu_temperature_info(f: &mut Frame, area: Rect) {
     let paragraph = Paragraph::new(info_lines)
         .block(
             Block::default()
-                .title(" � GPU & Temperature ")
+                .title(" 🎮 GPU & Temperature ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan))
         )
@@ -1000,6 +1003,7 @@ fn ui(f: &mut Frame, selected: usize, items: &[&str]) {
         .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
         .split(f.area());
 
+    // 自定义：修改应用标题、图标和颜色
     let header = Paragraph::new("🍋 Lemo - Windows System Toolkit")
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center)
@@ -1028,4 +1032,26 @@ fn ui(f: &mut Frame, selected: usize, items: &[&str]) {
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);
+}
+
+// 设置 Windows 控制台窗口标题
+#[cfg(windows)]
+fn set_console_title(title: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use winapi::um::wincon::SetConsoleTitleW;
+    
+    let wide: Vec<u16> = OsStr::new(title)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    
+    unsafe {
+        SetConsoleTitleW(wide.as_ptr());
+    }
+}
+
+#[cfg(not(windows))]
+fn set_console_title(_title: &str) {
+    // 非 Windows 平台不执行
 }
