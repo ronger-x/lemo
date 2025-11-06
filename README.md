@@ -5,15 +5,16 @@
 ## 功能特性
 
 - 🍋 **全新 TUI 模式** - 漂亮的终端交互界面，支持可滚动查看
-- � **实时系统监控** - Grid 布局仪表盘，动态显示 CPU、内存、磁盘、温度
-- �🔧 **修复 Windows 图标缓存** - 快速修复图标显示异常
+- 📊 **实时系统监控** - Grid 布局仪表盘，动态显示 CPU、内存、磁盘、温度
+- 🔧 **修复 Windows 图标缓存** - 快速修复图标显示异常
 - 🧹 **深度清理系统垃圾** - 清理多种类型的临时文件和缓存
   - Windows Temp 临时文件
   - Windows Prefetch 预读缓存
+  - Windows 回收站
   - 系统驱动器上的 *.tmp, *.log, *.bak, *.old 等文件
   - 用户临时文件、Cookies、Recent 文件
   - IE 临时文件和本地缓存
-- 💻 **详细系统信息** - 显示 CPU、内存、硬盘、网络、运行时间等
+- 📦 **一键安装/卸载** - 自动配置系统 PATH，方便快捷
 - ⌨️ **键盘导航** - 支持箭头键和 Vim 风格按键
 - 🎨 **彩色界面** - 清晰的视觉反馈和可滚动输出查看器
 
@@ -35,9 +36,10 @@ lemo
 **TUI 菜单选项：**
 - 🔧 **Fix Icon Cache** - 修复图标缓存
 - 🧹 **Clean Temp Files** - 清理临时文件
-- 💻 **System Info** - 查看系统信息（静态）
-- 📊 **Real-time Monitor** - 实时系统监控仪表盘（推荐！）
-- 🚪 **Exit** - 退出程序
+- � **Real-time Monitor** - 实时系统监控仪表盘（推荐！）
+- � **Install to System** - 安装 lemo 到系统 PATH
+- 🗑️ **Uninstall from System** - 从系统卸载 lemo
+- ➡️ **Exit** - 退出程序
 
 ### 📊 实时系统监控（新功能！）
 
@@ -71,40 +73,7 @@ lemo
 
 ### 📟 CLI 模式（命令行）
 
-所有原有命令仍然可用：
-
-### 方法 1: 使用安装脚本（推荐）
-
-1. 首先编译 Release 版本：
-```powershell
-cargo build --release
-```
-
-2. 以管理员身份运行安装脚本：
-```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1
-```
-
-安装后，程序会自动添加到系统 PATH，你可以在任何位置直接运行 `lemo` 命令。
-
-### 方法 2: 手动安装
-
-1. 编译项目：
-```powershell
-cargo build --release
-```
-
-2. 将 `target\release\lemo.exe` 复制到你想要的位置（如 `C:\Program Files\lemo\`）
-
-3. 将该目录添加到系统 PATH：
-   - 右键"此电脑" → "属性" → "高级系统设置"
-   - 点击"环境变量"
-   - 在"系统变量"中找到 `Path`，点击"编辑"
-   - 添加 lemo.exe 所在目录的路径
-
-## 使用方法
-
-### 修复图标缓存
+#### 修复图标缓存
 ```powershell
 lemo fix-icon-cache
 ```
@@ -112,7 +81,7 @@ lemo fix-icon-cache
 选项：
 - `-r, --restart-explorer <true|false>` - 是否自动重启资源管理器（默认: true）
 
-### 清理临时文件
+#### 清理临时文件
 ```powershell
 # 仅清理系统临时文件
 lemo clean-temp
@@ -128,6 +97,7 @@ lemo clean-temp -i
 **基础清理**（无需参数）:
 - ✅ Windows 系统临时文件 (`C:\Windows\Temp`)
 - ✅ Windows 预读缓存 (`C:\Windows\Prefetch`)
+- ✅ Windows 回收站
 - ✅ **深度扫描系统驱动器**（智能递归，限制深度）：
   - `*.tmp` - 临时文件
   - `*.log` - 日志文件
@@ -159,31 +129,78 @@ lemo clean-temp -i
 - ✅ 总计删除/跳过的文件数量
 - ✅ 智能深度限制，平衡性能和效果
 
-### 显示系统信息
+#### 安装到系统
 ```powershell
-lemo sys-info
+lemo install
 ```
 
-显示详细的系统信息，包括：
-- 📌 基本信息（操作系统、架构、用户等）
-- 🔧 CPU 信息（型号、核心数、使用率）
-- 💾 内存信息（总量、使用率、交换空间）
-- 💿 磁盘信息（所有驱动器的容量和使用情况）
-- 🌡️ 温度信息（如果硬件支持）
-- 🌐 网络接口（流量统计）
-- ⏱️ 系统运行时间
+**功能说明：**
+- ✅ 自动复制可执行文件到 `%LOCALAPPDATA%\lemo`
+- ✅ 自动添加到系统 PATH（需要管理员权限）
+- ✅ 安装后可在任何位置直接运行 `lemo` 命令
+- ✅ 重启终端后生效
 
-### 查看帮助
+#### 从系统卸载
+```powershell
+lemo uninstall
+```
+
+**功能说明：**
+- ✅ 从系统 PATH 中移除
+- ✅ 删除安装目录
+- ✅ 完全清理（需要管理员权限）
+
+#### 查看帮助
 ```powershell
 lemo --help
 lemo <command> --help
 ```
 
+## 安装
+
+### 方法 1: 使用内置安装命令（推荐）
+
+1. 首先编译 Release 版本：
+```powershell
+cargo build --release
+```
+
+2. 运行安装命令：
+```powershell
+# CLI 方式
+.\target\release\lemo.exe install
+
+# 或使用 TUI 方式（进入后选择 "Install to System"）
+.\target\release\lemo.exe
+```
+
+安装后，程序会自动添加到系统 PATH，你可以在任何位置直接运行 `lemo` 命令。
+
+### 方法 2: 手动安装
+
+1. 编译项目：
+```powershell
+cargo build --release
+```
+
+2. 将 `target\release\lemo.exe` 复制到你想要的位置（如 `C:\Program Files\lemo\`）
+
+3. 将该目录添加到系统 PATH：
+   - 右键"此电脑" → "属性" → "高级系统设置"
+   - 点击"环境变量"
+   - 在"系统变量"中找到 `Path`，点击"编辑"
+   - 添加 lemo.exe 所在目录的路径
+
 ## 卸载
 
-以管理员身份运行卸载脚本：
+### 使用内置卸载命令（推荐）
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File uninstall.ps1
+# CLI 方式
+lemo uninstall
+
+# 或使用 TUI 方式（进入后选择 "Uninstall from System"）
+lemo
 ```
 
 ## 开发
@@ -217,11 +234,3 @@ cargo build --release
 - [winapi](https://github.com/retep998/winapi-rs) - Windows API 调用
 - [anyhow](https://github.com/dtolnay/anyhow) - 错误处理
 - [chrono](https://github.com/chronotope/chrono) - 日期时间处理
-
-## 许可证
-
-MIT
-
-## 作者
-
-ronger
