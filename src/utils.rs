@@ -227,42 +227,34 @@ fn clean_windows_bak_files<O: CleanOutput>(output: &mut O) -> Result<(usize, usi
 
 // 子函数：清理回收站
 fn clean_recycle_bin<O: CleanOutput>(output: &mut O) -> Result<(usize, usize, u64)> {
-    let system_drive = env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
-    let mut total_deleted = 0;
-    let mut total_failed = 0;
-    let mut total_size = 0u64;
-
-    // 清理旧版回收站
-    let recycled = PathBuf::from(&system_drive).join("RECYCLED");
-    if recycled.exists() {
-        output.print_empty();
-        output.print(&format!("📁 Cleaning recycle bin (old): {}", recycled.display()));
-        let (deleted, failed, size) = clean_directory_with_output(&recycled, output)?;
-        total_deleted += deleted;
-        total_failed += failed;
-        total_size += size;
-        output.print(&format!(
-            "   Deleted: {} items, Skipped: {}, Freed: {:.2} MB",
-            deleted, failed, size as f64 / 1024.0 / 1024.0
-        ));
-    }
+    use winapi::um::shellapi::SHEmptyRecycleBinW;
     
-    // 清理新版回收站
-    let recycle_bin = PathBuf::from(&system_drive).join("$Recycle.Bin");
-    if recycle_bin.exists() {
-        output.print_empty();
-        output.print(&format!("📁 Cleaning recycle bin: {}", recycle_bin.display()));
-        let (deleted, failed, size) = clean_directory_with_output(&recycle_bin, output)?;
-        total_deleted += deleted;
-        total_failed += failed;
-        total_size += size;
-        output.print(&format!(
-            "   Deleted: {} items, Skipped: {}, Freed: {:.2} MB",
-            deleted, failed, size as f64 / 1024.0 / 1024.0
-        ));
-    }
+    output.print_empty();
+    output.print("🗑️  Emptying recycle bin...");
     
-    Ok((total_deleted, total_failed, total_size))
+    // 使用 Windows API 清空回收站
+    // SHERB_NOCONFIRMATION = 0x00000001 (不显示确认对话框)
+    // SHERB_NOPROGRESSUI = 0x00000002 (不显示进度对话框)
+    // SHERB_NOSOUND = 0x00000004 (不播放声音)
+    let flags = 0x00000001 | 0x00000002 | 0x00000004;
+    
+    unsafe {
+        // NULL 表示清空所有驱动器的回收站
+        let result = SHEmptyRecycleBinW(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            flags
+        );
+        
+        if result == 0 {
+            output.print("   ✅ Recycle bin emptied successfully");
+            // 注意：无法准确获取删除的文件数量和大小，返回估计值
+            Ok((1, 0, 0))
+        } else {
+            output.print(&format!("   ⚠️  Failed to empty recycle bin (error code: 0x{:X})", result));
+            Ok((0, 1, 0))
+        }
+    }
 }
 
 // 子函数：清理系统驱动器临时文件
