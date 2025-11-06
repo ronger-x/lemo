@@ -31,9 +31,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    FixIconCache { #[arg(short, long, default_value_t = true)] restart_explorer: bool },
-    CleanTemp { #[arg(short, long)] include_user: bool },
-    SysInfo,
+    /// Fix Windows icon cache and restart Explorer
+    FixIconCache { 
+        #[arg(short, long, default_value_t = true)] 
+        restart_explorer: bool 
+    },
+    /// Clean temporary files (system only by default)
+    CleanTemp { 
+        #[arg(short, long)] 
+        include_user: bool 
+    },
+    /// Install lemo to system PATH
+    Install,
+    /// Uninstall lemo from system
+    Uninstall,
 }
 
 fn main() -> Result<()> {
@@ -56,7 +67,8 @@ fn run_cli_mode(command: Commands) -> Result<()> {
     match command {
         Commands::FixIconCache { restart_explorer } => fix_icon_cache(restart_explorer)?,
         Commands::CleanTemp { include_user } => clean_temp(include_user)?,
-        Commands::SysInfo => show_sys_info()?,
+        Commands::Install => install_to_system()?,
+        Commands::Uninstall => uninstall_from_system()?,
     }
     Ok(())
 }
@@ -77,9 +89,19 @@ fn run_tui() -> Result<()> {
     res
 }
 
-fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> 
+where
+    B: std::io::Write,
+{
     let mut selected = 0;
-    let items = vec!["🔧 Fix Icon Cache", "🧹 Clean Temp Files", "💻 System Info", "📊 Real-time Monitor", "➡️ Exit"];
+    let items = vec![
+        "🔧 Fix Icon Cache", 
+        "🧹 Clean Temp Files", 
+        "📊 Real-time Monitor", 
+        "📦 Install to System",
+        "🗑️  Uninstall from System",
+        "➡️ Exit"
+    ];
 
     loop {
         terminal.draw(|f| ui(f, selected, &items))?;
@@ -101,12 +123,15 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<(
                                 execute_with_live_output(terminal, "Clean Temp Files", clean_temp_with_streaming())?;
                             }
                             2 => {
-                                execute_with_live_output(terminal, "System Info", show_sys_info_with_streaming())?;
-                            }
-                            3 => {
                                 show_realtime_monitor(terminal)?;
                             }
-                            4 => break,
+                            3 => {
+                                execute_simple_task(terminal, "Install to System", || install_to_system())?;
+                            }
+                            4 => {
+                                execute_simple_task(terminal, "Uninstall from System", || uninstall_from_system())?;
+                            }
+                            5 => break,
                             _ => {}
                         }
                     }
@@ -146,13 +171,17 @@ fn execute_with_live_output<B: ratatui::backend::Backend>(
     
     let mut scroll: usize = 0;
     let start_time = std::time::Instant::now();
+    let mut last_render = std::time::Instant::now();
+    let render_interval = Duration::from_millis(100); // 降低渲染频率到100ms
     
     // 主循环：渲染界面并接收消息
     loop {
         // 接收所有待处理的消息（非阻塞）
+        let mut has_new_message = false;
         while let Ok(line) = rx.try_recv() {
             let mut lines_guard = lines.lock().unwrap();
             lines_guard.push(line);
+            has_new_message = true;
         }
         
         // 检查线程是否完成
@@ -193,48 +222,52 @@ fn execute_with_live_output<B: ratatui::backend::Backend>(
             break;
         }
         
-        // 渲染界面
-        {
-            let current_lines = lines.lock().unwrap();
-            terminal.draw(|f| {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(0), Constraint::Length(3)])
-                    .split(f.area());
-                
-                let visible_height = chunks[0].height.saturating_sub(2) as usize;
-                
-                // 自动滚动到最新内容
-                let max_scroll = current_lines.len().saturating_sub(visible_height);
-                scroll = max_scroll;
-                
-                let visible_lines: Vec<Line> = current_lines
-                    .iter()
-                    .skip(scroll)
-                    .take(visible_height)
-                    .map(|s| Line::from(s.clone()))
-                    .collect();
-                
-                let title_text = format!(" {} - Running... [{:.1}s] ", title, start_time.elapsed().as_secs_f64());
-                
-                let paragraph = Paragraph::new(visible_lines)
-                    .block(
-                        Block::default()
-                            .title(title_text)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(Color::Yellow))
-                    )
-                    .style(Style::default().fg(Color::White))
-                    .wrap(Wrap { trim: false });
-                
-                f.render_widget(paragraph, chunks[0]);
-                
-                let footer = Paragraph::new("⏳ Operation in progress, please wait...")
-                    .style(Style::default().fg(Color::Yellow))
-                    .alignment(Alignment::Center)
-                    .block(Block::default().borders(Borders::ALL));
-                f.render_widget(footer, chunks[1]);
-            })?;
+        // 只在有新消息或达到渲染间隔时才渲染，避免过度刷新
+        if has_new_message || last_render.elapsed() >= render_interval {
+            // 渲染界面
+            {
+                let current_lines = lines.lock().unwrap();
+                terminal.draw(|f| {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Min(0), Constraint::Length(3)])
+                        .split(f.area());
+                    
+                    let visible_height = chunks[0].height.saturating_sub(2) as usize;
+                    
+                    // 自动滚动到最新内容
+                    let max_scroll = current_lines.len().saturating_sub(visible_height);
+                    scroll = max_scroll;
+                    
+                    let visible_lines: Vec<Line> = current_lines
+                        .iter()
+                        .skip(scroll)
+                        .take(visible_height)
+                        .map(|s| Line::from(s.clone()))
+                        .collect();
+                    
+                    let title_text = format!(" {} - Running... [{:.1}s] ", title, start_time.elapsed().as_secs_f64());
+                    
+                    let paragraph = Paragraph::new(visible_lines)
+                        .block(
+                            Block::default()
+                                .title(title_text)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(Color::Yellow))
+                        )
+                        .style(Style::default().fg(Color::White))
+                        .wrap(Wrap { trim: false });
+                    
+                    f.render_widget(paragraph, chunks[0]);
+                    
+                    let footer = Paragraph::new("⏳ Operation in progress, please wait...")
+                        .style(Style::default().fg(Color::Yellow))
+                        .alignment(Alignment::Center)
+                        .block(Block::default().borders(Borders::ALL));
+                    f.render_widget(footer, chunks[1]);
+                })?;
+            }
+            last_render = std::time::Instant::now();
         }
         
         // 短暂休眠避免过度占用 CPU
@@ -242,6 +275,47 @@ fn execute_with_live_output<B: ratatui::backend::Backend>(
     }
     
     Ok(())
+}
+
+// 执行简单任务（不需要流式输出）
+fn execute_simple_task<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    title: &str,
+    func: impl FnOnce() -> Result<()>,
+) -> Result<()> 
+where
+    B: std::io::Write,
+{
+    use std::io::{self, Write};
+    
+    // 临时退出 TUI 模式
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    
+    // 打印标题
+    println!("\n{}", "=".repeat(50));
+    println!("{}", title);
+    println!("{}", "=".repeat(50));
+    println!();
+    
+    // 执行任务
+    let result = func();
+    
+    // 等待用户按键
+    println!();
+    print!("Press Enter to return to menu...");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    
+    // 重新进入 TUI 模式
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.hide_cursor()?;
+    terminal.clear()?;
+    
+    result
 }
 
 // 可滚动查看器
@@ -261,7 +335,19 @@ fn show_scrollable_viewer<B: ratatui::backend::Backend>(
             // 计算可见行数
             let visible_height = chunks[0].height.saturating_sub(2) as usize; // 减去边框
             
-            // 创建可见内容
+            // 计算最大滚动位置
+            let max_scroll = if lines.len() > visible_height {
+                lines.len() - visible_height
+            } else {
+                0
+            };
+            
+            // 确保 scroll 不超过最大值
+            if scroll > max_scroll {
+                scroll = max_scroll;
+            }
+            
+            // 创建可见内容 - 使用自动换行来处理长文本
             let visible_lines: Vec<Line> = lines
                 .iter()
                 .skip(scroll)
@@ -269,59 +355,69 @@ fn show_scrollable_viewer<B: ratatui::backend::Backend>(
                 .map(|s| Line::from(s.clone()))
                 .collect();
             
+            let current_line = if lines.is_empty() { 
+                1 
+            } else { 
+                scroll + 1 
+            };
+            
             let paragraph = Paragraph::new(visible_lines)
                 .block(
                     Block::default()
-                        .title(format!(" Output (Line {}/{}) ", scroll + 1, lines.len()))
+                        .title(format!(" Output (Line {}/{}) ", current_line, lines.len()))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan))
                 )
                 .style(Style::default().fg(Color::White))
-                .wrap(Wrap { trim: false });
+                .wrap(Wrap { trim: true }); // 改为 trim: true 以自动换行长文本
             
             f.render_widget(paragraph, chunks[0]);
             
             // 底部提示
-            let footer = Paragraph::new("↑/↓: Scroll | Home/End: First/Last | Q/Esc/Enter: Return to menu")
+            let footer = Paragraph::new("↑/↓: Scroll | PgUp/PgDn: Fast scroll | Home/End: First/Last | Q/Esc/Enter: Return")
                 .style(Style::default().fg(Color::Gray))
                 .alignment(Alignment::Center)
                 .block(Block::default().borders(Borders::ALL));
             f.render_widget(footer, chunks[1]);
         })?;
         
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter => break,
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let visible_height = terminal.size()?.height.saturating_sub(5) as usize;
-                        let max_scroll = lines.len().saturating_sub(visible_height);
-                        if scroll < max_scroll {
-                            scroll += 1;
+        // 使用非阻塞的 poll 来检查事件，避免界面卡住
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    let visible_height = terminal.size()?.height.saturating_sub(5) as usize;
+                    let max_scroll = if lines.len() > visible_height {
+                        lines.len() - visible_height
+                    } else {
+                        0
+                    };
+                    
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter => break,
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if scroll < max_scroll {
+                                scroll += 1;
+                            }
                         }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if scroll > 0 {
-                            scroll -= 1;
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if scroll > 0 {
+                                scroll -= 1;
+                            }
                         }
+                        KeyCode::PageDown => {
+                            scroll = (scroll + visible_height).min(max_scroll);
+                        }
+                        KeyCode::PageUp => {
+                            scroll = scroll.saturating_sub(visible_height);
+                        }
+                        KeyCode::Home => {
+                            scroll = 0;
+                        }
+                        KeyCode::End => {
+                            scroll = max_scroll;
+                        }
+                        _ => {}
                     }
-                    KeyCode::PageDown => {
-                        let visible_height = terminal.size()?.height.saturating_sub(5) as usize;
-                        let max_scroll = lines.len().saturating_sub(visible_height);
-                        scroll = (scroll + visible_height).min(max_scroll);
-                    }
-                    KeyCode::PageUp => {
-                        let visible_height = terminal.size()?.height.saturating_sub(5) as usize;
-                        scroll = scroll.saturating_sub(visible_height);
-                    }
-                    KeyCode::Home => {
-                        scroll = 0;
-                    }
-                    KeyCode::End => {
-                        let visible_height = terminal.size()?.height.saturating_sub(5) as usize;
-                        scroll = lines.len().saturating_sub(visible_height);
-                    }
-                    _ => {}
                 }
             }
         }
@@ -404,8 +500,8 @@ fn render_monitor_ui(f: &mut Frame, sys: &sysinfo::System, networks: &sysinfo::N
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(3),  // CPU
-            Constraint::Min(3),  // 内存
+            Constraint::Length(3),  // CPU
+            Constraint::Length(3),  // 内存
             Constraint::Min(0),  // 磁盘
         ])
         .split(content_chunks[0]);
@@ -414,8 +510,8 @@ fn render_monitor_ui(f: &mut Frame, sys: &sysinfo::System, networks: &sysinfo::N
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(6),  // 系统信息
-            Constraint::Min(6),  // GPU
+            Constraint::Length(6),  // 系统信息
+            Constraint::Length(6),  // GPU
             Constraint::Min(0),  // 网络
         ])
         .split(content_chunks[1]);
@@ -470,6 +566,11 @@ fn render_cpu_info(f: &mut Frame, sys: &sysinfo::System, area: Rect) {
     } else {
         Color::Green
     };
+
+    let label = Span::styled(
+        format!("{:.1}%", total_usage),
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+    );
     
     // 使用紧凑的 Block 样式
     let gauge = Gauge::default()
@@ -481,7 +582,7 @@ fn render_cpu_info(f: &mut Frame, sys: &sysinfo::System, area: Rect) {
         )
         .gauge_style(Style::default().fg(gauge_color).add_modifier(Modifier::BOLD))
         .percent(total_usage as u16)
-        .label(format!("{:.1}%", total_usage));
+        .label(label);
     
     f.render_widget(gauge, area);
 }
@@ -500,6 +601,11 @@ fn render_memory_info(f: &mut Frame, sys: &sysinfo::System, area: Rect) {
         Color::Green
     };
     
+    let label = Span::styled(
+        format!("{:.1}%", usage_percent),
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+    );
+    
     // 使用更简洁的标题
     let gauge = Gauge::default()
         .block(
@@ -510,7 +616,7 @@ fn render_memory_info(f: &mut Frame, sys: &sysinfo::System, area: Rect) {
         )
         .gauge_style(Style::default().fg(gauge_color).add_modifier(Modifier::BOLD))
         .percent(usage_percent as u16)
-        .label(format!("{:.1}%", usage_percent));
+        .label(label);
     
     f.render_widget(gauge, area);
 }
