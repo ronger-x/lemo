@@ -95,13 +95,13 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<(
                     KeyCode::Enter => {
                         match selected {
                             0 => {
-                                execute_with_pager(terminal, || fix_icon_cache_with_output(true))?;
+                                execute_with_live_output(terminal, "Fix Icon Cache", fix_icon_cache_with_streaming())?;
                             }
                             1 => {
-                                execute_with_pager(terminal, || clean_temp_with_output(false))?;
+                                execute_with_live_output(terminal, "Clean Temp Files", clean_temp_with_streaming())?;
                             }
                             2 => {
-                                execute_with_pager(terminal, || show_sys_info_with_output())?;
+                                execute_with_live_output(terminal, "System Info", show_sys_info_with_streaming())?;
                             }
                             3 => {
                                 show_realtime_monitor(terminal)?;
@@ -118,17 +118,128 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<(
     Ok(())
 }
 
-// 执行命令并使用可滚动查看器
-fn execute_with_pager<B: ratatui::backend::Backend>(
+// 执行命令并实时显示输出
+fn execute_with_live_output<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
-    func: impl FnOnce() -> Result<String>,
+    title: &str,
+    func: impl FnOnce(Box<dyn FnMut(String) + Send>) -> Result<()> + Send + 'static,
 ) -> Result<()> {
-    // 捕获输出
-    let output = func()?;
-    let lines: Vec<String> = output.lines().map(|s| s.to_string()).collect();
+    use std::sync::{Arc, Mutex};
+    use std::sync::mpsc::{channel, Receiver};
     
-    // 显示可滚动查看器
-    show_scrollable_viewer(terminal, &lines)?;
+    // 创建消息通道
+    let (tx, rx): (std::sync::mpsc::Sender<String>, Receiver<String>) = channel();
+    
+    // 存储所有输出行
+    let lines = Arc::new(Mutex::new(vec![
+        format!("⏳ {} - Starting...", title),
+        String::new(),
+    ]));
+    
+    // 在单独线程中执行操作
+    let handle = std::thread::spawn(move || {
+        let callback = Box::new(move |line: String| {
+            let _ = tx.send(line);
+        });
+        func(callback)
+    });
+    
+    let mut scroll: usize = 0;
+    let start_time = std::time::Instant::now();
+    
+    // 主循环：渲染界面并接收消息
+    loop {
+        // 接收所有待处理的消息（非阻塞）
+        while let Ok(line) = rx.try_recv() {
+            let mut lines_guard = lines.lock().unwrap();
+            lines_guard.push(line);
+        }
+        
+        // 检查线程是否完成
+        let is_finished = handle.is_finished();
+        
+        if is_finished {
+            // 接收剩余消息
+            while let Ok(line) = rx.try_recv() {
+                let mut lines_guard = lines.lock().unwrap();
+                lines_guard.push(line);
+            }
+            
+            // 检查执行结果
+            match handle.join() {
+                Ok(result) => {
+                    let mut lines_guard = lines.lock().unwrap();
+                    match result {
+                        Ok(_) => {
+                            lines_guard.push(String::new());
+                            lines_guard.push(format!("✅ Operation completed in {:.2}s", start_time.elapsed().as_secs_f64()));
+                        }
+                        Err(e) => {
+                            lines_guard.push(String::new());
+                            lines_guard.push(format!("❌ Error: {}", e));
+                        }
+                    }
+                }
+                Err(_) => {
+                    let mut lines_guard = lines.lock().unwrap();
+                    lines_guard.push(String::new());
+                    lines_guard.push("❌ Thread execution failed".to_string());
+                }
+            }
+            
+            // 显示最终结果
+            let final_lines = lines.lock().unwrap().clone();
+            show_scrollable_viewer(terminal, &final_lines)?;
+            break;
+        }
+        
+        // 渲染界面
+        {
+            let current_lines = lines.lock().unwrap();
+            terminal.draw(|f| {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(0), Constraint::Length(3)])
+                    .split(f.area());
+                
+                let visible_height = chunks[0].height.saturating_sub(2) as usize;
+                
+                // 自动滚动到最新内容
+                let max_scroll = current_lines.len().saturating_sub(visible_height);
+                scroll = max_scroll;
+                
+                let visible_lines: Vec<Line> = current_lines
+                    .iter()
+                    .skip(scroll)
+                    .take(visible_height)
+                    .map(|s| Line::from(s.clone()))
+                    .collect();
+                
+                let title_text = format!(" {} - Running... [{:.1}s] ", title, start_time.elapsed().as_secs_f64());
+                
+                let paragraph = Paragraph::new(visible_lines)
+                    .block(
+                        Block::default()
+                            .title(title_text)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::Yellow))
+                    )
+                    .style(Style::default().fg(Color::White))
+                    .wrap(Wrap { trim: false });
+                
+                f.render_widget(paragraph, chunks[0]);
+                
+                let footer = Paragraph::new("⏳ Operation in progress, please wait...")
+                    .style(Style::default().fg(Color::Yellow))
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL));
+                f.render_widget(footer, chunks[1]);
+            })?;
+        }
+        
+        // 短暂休眠避免过度占用 CPU
+        std::thread::sleep(Duration::from_millis(50));
+    }
     
     Ok(())
 }

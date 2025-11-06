@@ -955,3 +955,328 @@ pub fn show_sys_info_with_output() -> Result<String> {
 
     Ok(output)
 }
+
+// ========================================
+// Streaming output functions (callback-based)
+// ========================================
+
+// Fix icon cache with streaming output (callback-based)
+pub fn fix_icon_cache_with_streaming() -> impl FnOnce(Box<dyn FnMut(String) + Send>) -> Result<()> + Send + 'static {
+    |mut callback: Box<dyn FnMut(String) + Send>| {
+        callback("🔧 Fixing icon cache...".to_string());
+        callback(String::new());
+
+        callback("⏳ Closing Windows Explorer...".to_string());
+        let _ = Command::new("taskkill")
+            .args(&["/f", "/im", "explorer.exe"])
+            .output();
+
+        thread::sleep(Duration::from_secs(2));
+
+        let user_profile = match env::var("USERPROFILE") {
+            Ok(p) => p,
+            Err(_) => return Err(anyhow::anyhow!("Cannot get USERPROFILE")),
+        };
+        let mut cache_files = Vec::new();
+
+        let icon_cache = PathBuf::from(&user_profile).join(r"AppData\Local\IconCache.db");
+        cache_files.push(icon_cache);
+
+        let icon_cache_pattern =
+            PathBuf::from(&user_profile).join(r"AppData\Local\Microsoft\Windows\Explorer");
+
+        if let Ok(entries) = fs::read_dir(icon_cache_pattern) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(file_name) = path.file_name() {
+                    if let Some(name) = file_name.to_str() {
+                        if name.starts_with("iconcache_") && name.ends_with(".db") {
+                            cache_files.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut deleted_count = 0;
+        let mut skipped_count = 0;
+
+        for file in cache_files {
+            match fs::remove_file(&file) {
+                Ok(_) => {
+                    callback(format!("✅ Deleted: {:?}", file));
+                    deleted_count += 1;
+                }
+                Err(e) => {
+                    callback(format!("⚠️  Skipped: {:?} ({})", file, e));
+                    skipped_count += 1;
+                }
+            }
+        }
+
+        callback(String::new());
+        callback(format!(
+            "📊 Summary: Deleted {} files, Skipped {} files",
+            deleted_count, skipped_count
+        ));
+
+        callback(String::new());
+        callback("🔄 Restarting Windows Explorer...".to_string());
+        match Command::new("explorer.exe").spawn() {
+            Ok(_) => callback("✨ Fix completed! Desktop will restore in a few seconds.".to_string()),
+            Err(e) => callback(format!("⚠️  Warning: Failed to restart Explorer: {}", e)),
+        }
+        thread::sleep(Duration::from_secs(3));
+
+        Ok(())
+    }
+}
+
+// Clean temp files with streaming output (callback-based)
+pub fn clean_temp_with_streaming() -> impl FnOnce(Box<dyn FnMut(String) + Send>) -> Result<()> + Send + 'static {
+    |mut callback: Box<dyn FnMut(String) + Send>| {
+        callback("🧹 Cleaning temporary files...".to_string());
+        callback("═══════════════════════════════════════════════════".to_string());
+
+        let mut total_deleted = 0;
+        let mut total_failed = 0;
+        let mut total_size_freed: u64 = 0;
+
+        // 清理 Windows Temp 目录
+        let windows_temp = PathBuf::from(r"C:\Windows\Temp");
+        if windows_temp.exists() {
+            callback(String::new());
+            callback(format!("📁 Cleaning Windows temp directory: {}", windows_temp.display()));
+            let (deleted, failed, size) = clean_directory_streaming(&windows_temp, &mut callback)?;
+            total_deleted += deleted;
+            total_failed += failed;
+            total_size_freed += size;
+            callback(format!(
+                "   ✅ Deleted: {} items, Skipped: {}, Freed: {:.2} MB",
+                deleted,
+                failed,
+                size as f64 / 1024.0 / 1024.0
+            ));
+        }
+
+        // 清理 Windows Prefetch
+        let prefetch = PathBuf::from(r"C:\Windows\Prefetch");
+        if prefetch.exists() {
+            callback(String::new());
+            callback(format!("📁 Cleaning Windows prefetch: {}", prefetch.display()));
+            let (deleted, failed, size) = clean_directory_streaming(&prefetch, &mut callback)?;
+            total_deleted += deleted;
+            total_failed += failed;
+            total_size_freed += size;
+            callback(format!(
+                "   ✅ Deleted: {} items, Skipped: {}, Freed: {:.2} MB",
+                deleted,
+                failed,
+                size as f64 / 1024.0 / 1024.0
+            ));
+        }
+
+        // 清理系统驱动器临时文件
+        callback(String::new());
+        callback("📁 Scanning system drive for temp files...".to_string());
+        let system_drive = env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        let extensions = vec!["tmp", "log", "gid", "chk", "old", "bak", "_mp"];
+        
+        let mut last_report = 0;
+        let mut progress_callback = |_path: &str, deleted: usize, _failed: usize, size: u64| {
+            // 每 100 个文件报告一次进度
+            if deleted > 0 && deleted % 100 == 0 && deleted != last_report {
+                callback(format!(
+                    "   ⏳ Progress: {} deleted, {:.2} MB freed...",
+                    deleted,
+                    size as f64 / 1024.0 / 1024.0
+                ));
+                last_report = deleted;
+            }
+        };
+        
+        let (deleted, failed, size) = clean_files_by_extension_with_progress(
+            &PathBuf::from(&system_drive),
+            &extensions,
+            &mut progress_callback,
+            0,
+        )?;
+        
+        total_deleted += deleted;
+        total_failed += failed;
+        total_size_freed += size;
+        callback(format!(
+            "   ✅ Completed: {} items deleted, {} skipped, {:.2} MB freed",
+            deleted,
+            failed,
+            size as f64 / 1024.0 / 1024.0
+        ));
+
+        callback(String::new());
+        callback("═══════════════════════════════════════════════════".to_string());
+        callback("📊 Cleaning summary:".to_string());
+        callback(format!("   Total deleted: {} items", total_deleted));
+        callback(format!("   Total skipped: {} items", total_failed));
+        callback(format!(
+            "   Freed space: {:.2} MB ({:.2} GB)",
+            total_size_freed as f64 / 1024.0 / 1024.0,
+            total_size_freed as f64 / 1024.0 / 1024.0 / 1024.0
+        ));
+        callback("═══════════════════════════════════════════════════".to_string());
+        callback("✨ Cleaning completed!".to_string());
+
+        Ok(())
+    }
+}
+
+// Clean directory with streaming output
+fn clean_directory_streaming(
+    dir: &PathBuf,
+    callback: &mut Box<dyn FnMut(String) + Send>,
+) -> Result<(usize, usize, u64)> {
+    let mut deleted_count = 0;
+    let mut failed_count = 0;
+    let mut total_size = 0u64;
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+
+            let size = if path.is_file() {
+                fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
+            } else if path.is_dir() {
+                calculate_dir_size(&path)
+            } else {
+                0
+            };
+
+            let result = if path.is_dir() {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+
+            match result {
+                Ok(_) => {
+                    deleted_count += 1;
+                    total_size += size;
+                    if deleted_count <= 5 {
+                        callback(format!(
+                            "   ✅ Deleted: {}",
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                    }
+                }
+                Err(_) => {
+                    failed_count += 1;
+                    if failed_count <= 3 {
+                        callback(format!(
+                            "   ⚠️  Skipped: {} (locked or no permission)",
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                    }
+                }
+            }
+        }
+
+        if deleted_count > 5 {
+            callback(format!("   ... and {} more items deleted", deleted_count - 5));
+        }
+        if failed_count > 3 {
+            callback(format!("   ... and {} more items skipped", failed_count - 3));
+        }
+    }
+
+    Ok((deleted_count, failed_count, total_size))
+}
+
+// Show system info with streaming output (callback-based)
+pub fn show_sys_info_with_streaming() -> impl FnOnce(Box<dyn FnMut(String) + Send>) -> Result<()> + Send + 'static {
+    |mut callback: Box<dyn FnMut(String) + Send>| {
+        use sysinfo::Disks;
+
+        callback("💻 System Information:".to_string());
+        callback("═══════════════════════════════════════════════════".to_string());
+
+        callback(String::new());
+        callback("📌 Basic Information:".to_string());
+        callback(format!("  OS: {}", env::consts::OS));
+        callback(format!("  Architecture: {}", env::consts::ARCH));
+        callback(format!(
+            "  User: {}",
+            env::var("USERNAME").unwrap_or_else(|_| "Unknown".to_string())
+        ));
+        callback(format!(
+            "  Computer: {}",
+            env::var("COMPUTERNAME").unwrap_or_else(|_| "Unknown".to_string())
+        ));
+
+        let mut sys = System::new_all();
+        sys.refresh_all();
+
+        callback(String::new());
+        callback("🔧 CPU Information:".to_string());
+        callback(format!(
+            "  Physical cores: {}",
+            sys.physical_core_count().unwrap_or(0)
+        ));
+        callback(format!("  Logical cores: {}", sys.cpus().len()));
+
+        if let Some(cpu) = sys.cpus().first() {
+            callback(format!("  Model: {}", cpu.brand()));
+            callback(format!("  Frequency: {} MHz", cpu.frequency()));
+        }
+
+        thread::sleep(Duration::from_millis(500));
+        sys.refresh_cpu_usage();
+        let total_usage: f32 = sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>()
+            / sys.cpus().len() as f32;
+        callback(format!("  Total usage: {:.2}%", total_usage));
+
+        callback(String::new());
+        callback("💾 Memory Information:".to_string());
+        let total_mem = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+        let used_mem = sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+        let available_mem = sys.available_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+        callback(format!("  Total: {:.2} GB", total_mem));
+        callback(format!(
+            "  Used: {:.2} GB ({:.1}%)",
+            used_mem,
+            (used_mem / total_mem) * 100.0
+        ));
+        callback(format!("  Available: {:.2} GB", available_mem));
+
+        callback(String::new());
+        callback("💿 Disk Information:".to_string());
+        let disks = Disks::new_with_refreshed_list();
+        for disk in &disks {
+            let total_space = disk.total_space() as f64 / 1024.0 / 1024.0 / 1024.0;
+            let available_space = disk.available_space() as f64 / 1024.0 / 1024.0 / 1024.0;
+            let used_space = total_space - available_space;
+            let usage_percent = (used_space / total_space) * 100.0;
+
+            callback(format!(
+                "  {} - {}",
+                disk.name().to_string_lossy(),
+                disk.mount_point().display()
+            ));
+            callback(format!("    Total: {:.2} GB", total_space));
+            callback(format!("    Used: {:.2} GB ({:.1}%)", used_space, usage_percent));
+            callback(format!("    Available: {:.2} GB", available_space));
+        }
+
+        callback(String::new());
+        callback("⏱️  System Uptime:".to_string());
+        let uptime = System::uptime();
+        let days = uptime / 86400;
+        let hours = (uptime % 86400) / 3600;
+        let minutes = (uptime % 3600) / 60;
+        callback(format!("  {} days {} hours {} minutes", days, hours, minutes));
+
+        callback(String::new());
+        callback("═══════════════════════════════════════════════════".to_string());
+
+        Ok(())
+    }
+}
+
